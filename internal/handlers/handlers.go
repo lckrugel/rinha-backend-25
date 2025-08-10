@@ -31,7 +31,7 @@ func (h *PaymentHandlers) HandlePayment(c *gin.Context) {
 
 	h.redisRepo.Enqueue(c, paymentData)
 
-	// slog.Debug("Pagamento enfileirado", "correlationId", paymentData.CorrelationId)
+	slog.Debug("Pagamento enfileirado", "correlationId", paymentData.CorrelationId)
 
 	c.Status(http.StatusOK)
 }

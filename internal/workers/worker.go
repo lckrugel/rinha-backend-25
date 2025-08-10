@@ -88,7 +88,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 		return nil
 	}
 
-	// slog.Debug("Processando pagamento", "correlationId", paymentRequest.CorrelationId)
+	slog.Debug("Processando pagamento", "correlationId", paymentRequest.CorrelationId)
 
 	paymentResponse, err := w.callPaymentAPIWithRetry(ctx, paymentRequest)
 	if err != nil {
@@ -106,7 +106,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 		return fmt.Errorf("Erro ao marcar pagamento como processado: %w", err)
 	}
 
-	// slog.Debug("Pagamento processado com sucesso", "correlationId", processedPayment.CorrelationId, "amount", processedPayment.Amount)
+	slog.Debug("Pagamento processado com sucesso", "correlationId", processedPayment.CorrelationId, "amount", processedPayment.Amount)
 
 	return nil
 }
