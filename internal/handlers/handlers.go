@@ -29,19 +29,6 @@ func (h *PaymentHandlers) HandlePayment(c *gin.Context) {
 		return
 	}
 
-	// Jogar todas as requisições na fila ??
-	// isPaymentInQueue, err := h.redisRepo.IsProcessedOrInQueue(c, paymentData.CorrelationId)
-	// if err != nil {
-	// 	slog.Error("Erro ao verificar se pagamento já foi processado ou está na fila: %v", err)
-	// 	c.Status(http.StatusInternalServerError)
-	// 	return
-	// }
-
-	// if isPaymentInQueue {
-	// 	c.Status(http.StatusConflict)
-	// 	return
-	// }
-
 	h.redisRepo.Enqueue(c, paymentData)
 
 	// slog.Debug("Pagamento enfileirado", "correlationId", paymentData.CorrelationId)
