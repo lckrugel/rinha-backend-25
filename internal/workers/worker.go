@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -32,7 +32,7 @@ func NewWorkers(redisRepo *repositories.RedisRepository) *Workers {
 }
 
 func (w *Workers) StartWorkers(ctx context.Context, numWorkers int) {
-	log.Printf("Iniciando %d workers de processamento de pagamentos...", numWorkers)
+	slog.Info("Iniciando workers de processamento de pagamentos...", "nworkers", numWorkers)
 
 	var wg sync.WaitGroup
 	for i := range numWorkers {
@@ -43,23 +43,22 @@ func (w *Workers) StartWorkers(ctx context.Context, numWorkers int) {
 		}(i)
 	}
 	wg.Wait()
-	log.Println("Todos os workers de processamento de pagamentos foram finalizados")
 }
 
-func (w *Workers) start(ctx context.Context, workerID int) {
-	log.Printf("Worker %d iniciado", workerID)
+func (w *Workers) start(ctx context.Context, workerId int) {
+	slog.Info("Worker iniciado", "workerId", workerId)
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Worker %d recebeu sinal de parada", workerID)
+			slog.Info("Worker recebeu sinal de parada", "workerId", workerId)
 			return
 		default:
 			processCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 
 			err := w.processPayment(processCtx)
 			if err != nil {
-				log.Printf("Worker %d erro: %v", workerID, err)
+				slog.Warn("Worker encountered an error", "workerId", workerId, "err", err)
 			}
 
 			cancel()
@@ -89,7 +88,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 		return nil
 	}
 
-	// log.Printf("Processando pagamento: %s\n", paymentRequest.CorrelationId)
+	// slog.Debug("Processando pagamento", "correlationId", paymentRequest.CorrelationId)
 
 	paymentResponse, err := w.callPaymentAPIWithRetry(ctx, paymentRequest)
 	if err != nil {
@@ -107,7 +106,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 		return fmt.Errorf("Erro ao marcar pagamento como processado: %w", err)
 	}
 
-	// log.Printf("Pagamento processado com sucesso: %s (Amount: %.2f)\n", processedPayment.CorrelationId, processedPayment.Amount)
+	// slog.Debug("Pagamento processado com sucesso", "correlationId", processedPayment.CorrelationId, "amount", processedPayment.Amount)
 
 	return nil
 }
@@ -137,11 +136,10 @@ func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.Pay
 			return nil, fmt.Errorf("Erro não recuperável: %w", err)
 		}
 
-		fmt.Printf("Tentativa %d/%d falhou para pagamento %s, tentando novamente\n",
-			attempt+1, w.maxRetries+1, payment.CorrelationId)
+		slog.Debug("Tentativa falhou", "tentativa", attempt, "maxTentativas", w.maxRetries+1, "correlationId", payment.CorrelationId)
 	}
 
-	fmt.Printf("Todas as tentativas falharam para pagamento %s, tentando fallback\n", payment.CorrelationId)
+	slog.Info("Todas as tentativas falharam para pagamento, tentando fallback", "correlationId", payment.CorrelationId)
 	fallbackUrl := os.Getenv("FALLBACK_API_URL")
 	err := w.callPaymentAPI(ctx, fallbackUrl, &paymentAPIRequest)
 	if err == nil {
@@ -168,7 +166,7 @@ func (w *Workers) callPaymentAPI(ctx context.Context, url string, payment *dtos.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Processamento de pagamento falhou para '%v' com código: %d", url, resp.StatusCode)
+		slog.Warn("Processamento de pagamento falhou", "url", url, "codigo", resp.StatusCode)
 		return &HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,

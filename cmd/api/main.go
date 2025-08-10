@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -21,6 +21,33 @@ func setupRouter() *gin.Engine {
 	return r
 }
 
+func setupLogger() {
+	logLevel := os.Getenv("LOG_LEVEL")
+
+	var level slog.Level
+	switch logLevel {
+	case "DEBUG":
+		level = slog.LevelDebug
+	case "INFO":
+		level = slog.LevelInfo
+	case "WARN":
+		level = slog.LevelWarn
+	case "ERROR":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo // Default to INFO
+	}
+
+	opts := &slog.HandlerOptions{
+		Level: level,
+	}
+
+	handler := slog.NewTextHandler(os.Stdout, opts)
+
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+}
+
 func registerRoutes(r *gin.Engine, h *handlers.PaymentHandlers) {
 	r.POST("payments", h.HandlePayment)
 	r.GET("payments-summary", h.HandlePaymentSummary)
@@ -28,6 +55,7 @@ func registerRoutes(r *gin.Engine, h *handlers.PaymentHandlers) {
 }
 
 func main() {
+	setupLogger()
 	time.Sleep(1 * time.Second)
 
 	redisHost := os.Getenv("REDIS_HOST")
@@ -48,6 +76,6 @@ func main() {
 	}
 	go workers.StartWorkers(context.Background(), int(nWorkers))
 
-	log.Println("API is running on port 8080")
+	slog.Info("API is running on port 8080")
 	r.Run(":8080")
 }

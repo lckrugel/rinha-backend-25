@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -24,7 +24,7 @@ func (h *PaymentHandlers) HandlePayment(c *gin.Context) {
 	var paymentData dtos.PaymentRequest
 	error := c.ShouldBindJSON(&paymentData)
 	if error != nil {
-		log.Printf("Erro ao vincular dados de pagamento: %v", error)
+		slog.Error("Erro ao vincular dados de pagamento:", "err", error)
 		c.Status(http.StatusBadRequest)
 		return
 	}
@@ -32,7 +32,7 @@ func (h *PaymentHandlers) HandlePayment(c *gin.Context) {
 	// Jogar todas as requisições na fila ??
 	// isPaymentInQueue, err := h.redisRepo.IsProcessedOrInQueue(c, paymentData.CorrelationId)
 	// if err != nil {
-	// 	log.Printf("Erro ao verificar se pagamento já foi processado ou está na fila: %v", err)
+	// 	slog.Error("Erro ao verificar se pagamento já foi processado ou está na fila: %v", err)
 	// 	c.Status(http.StatusInternalServerError)
 	// 	return
 	// }
@@ -44,7 +44,7 @@ func (h *PaymentHandlers) HandlePayment(c *gin.Context) {
 
 	h.redisRepo.Enqueue(c, paymentData)
 
-	// log.Printf("Pagamento enfileirado: %s\n", paymentData.CorrelationId)
+	// slog.Debug("Pagamento enfileirado", "correlationId", paymentData.CorrelationId)
 
 	c.Status(http.StatusOK)
 }
@@ -79,8 +79,6 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 		}
 	}
 
-	log.Printf("DEBUG: Summary from %v to %v", from, to)
-
 	summary, err := h.redisRepo.GetSummaryByDateRange(c, from, to)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -93,6 +91,8 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 	response := &dtos.SummaryResponse{
 		Default: *summary,
 	}
+
+	slog.Info("Summary", "from", from, "to", to, "summary", summary)
 
 	c.JSON(http.StatusOK, response)
 }

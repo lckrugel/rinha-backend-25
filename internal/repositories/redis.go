@@ -19,7 +19,7 @@ func NewRedisRepository(addr, password string) *RedisRepository {
 		Addr:         addr,
 		Password:     password,
 		DB:           0,
-		PoolSize:     5,
+		PoolSize:     8,
 		MinIdleConns: 1,
 		MaxRetries:   3,
 		DialTimeout:  5 * time.Second,
