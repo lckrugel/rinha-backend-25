@@ -1,0 +1,68 @@
+# YAML anchors for reusable configurations
+x-api: &api
+  build: .
+  environment:
+    - N_WORKERS=1
+    - DEFAULT_API_URL=http://payment-processor-default:8080/payments
+    - FALLBACK_API_URL=http://payment-processor-fallback:8080/payments
+    - REDIS_HOST=redis
+    - REDIS_PASSWORD=123456
+  depends_on:
+    - redis
+  networks:
+    - payment-processor
+    - backend
+  deploy:
+    resources:
+      limits:
+        cpus: "0.5"
+        memory: "128MB"
+
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - api1
+      - api2
+    networks:
+      - payment-processor
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "32MB"
+
+  api1:
+    <<: *api
+
+  api2:
+    <<: *api
+
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.4"
+          memory: "62MB"
+
+volumes:
+  redis_data:
+
+networks:
+  backend:
+    driver: bridge
+    internal: false
+  payment-processor:
+    external: true
+  
+    

@@ -1,0 +1,39 @@
+package dtos
+
+type PaymentRequest struct {
+	CorrelationId string  `json:"correlationId"`
+	Amount        float32 `json:"amount"`
+}
+
+type PaymentAPIRequest struct {
+	CorrelationId string  `json:"correlationId"`
+	Amount        float32 `json:"amount"`
+	RequestedAt   string  `json:"requestedAt"`
+}
+
+type SummaryResponse struct {
+	Default  APISummary `json:"default"`
+	Fallback APISummary `json:"fallback"`
+}
+
+type APISummary struct {
+	TotalRequests int     `json:"totalRequests"`
+	TotalAmount   float32 `json:"totalAmount"`
+}
+
+type HealthCheckResponse struct {
+	Failing         bool `json:"failing"`
+	MinResponseTime int  `json:"minResponseTime"`
+}
+
+type PaymentAPISummaryResponse struct {
+	APISummary
+	TotalFee          float32 `json:"totalFee"`
+	FeePerTransaction float32 `json:"feePerTransaction"`
+}
+
+type ProcessedPayment struct {
+	CorrelationId string  `json:"correlationId"`
+	Amount        float32 `json:"amount"`
+	ProcessedAt   string  `json:"processedAt"`
+}
