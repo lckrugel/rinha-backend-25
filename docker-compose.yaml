@@ -2,10 +2,9 @@
 x-api: &api
   build: .
   environment:
-    - N_WORKERS=3
+    - N_WORKERS=2
+    - DEFAULT_API_BIAS=6
     - LOG_LEVEL=INFO
-    - DEFAULT_API_URL=http://payment-processor-default:8080/payments
-    - FALLBACK_API_URL=http://payment-processor-fallback:8080/payments
     - REDIS_HOST=redis
     - REDIS_PASSWORD=123456
   depends_on:

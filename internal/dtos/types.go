@@ -33,7 +33,20 @@ type PaymentAPISummaryResponse struct {
 }
 
 type ProcessedPayment struct {
-	CorrelationId string  `json:"correlationId"`
-	Amount        float32 `json:"amount"`
-	ProcessedAt   string  `json:"processedAt"`
+	CorrelationId string     `json:"correlationId"`
+	Api           PaymentAPI `json:"paymentAPI"`
+	Amount        float32    `json:"amount"`
+	ProcessedAt   string     `json:"processedAt"`
+}
+
+type PaymentAPI uint8
+
+const (
+	DEFAULT_API PaymentAPI = iota
+	FALLBACK_API
+)
+
+var ApiUrl = map[PaymentAPI]string{
+	DEFAULT_API:  "http://payment-processor-default:8080",
+	FALLBACK_API: "http://payment-processor-fallback:8080",
 }

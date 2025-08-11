@@ -66,20 +66,28 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 		}
 	}
 
-	summary, err := h.redisRepo.GetSummaryByDateRange(c, from, to)
+	defaultSummary, err := h.redisRepo.GetSummaryByDateRange(c, dtos.DEFAULT_API, from, to)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "Erro ao buscar resumo de pagamentos processados",
+			"message": "Erro ao buscar resumo de pagamentos processados pela API default",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	fallbackSummary, err := h.redisRepo.GetSummaryByDateRange(c, dtos.FALLBACK_API, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Erro ao buscar resumo de pagamentos processados pela API default",
 			"error":   err.Error(),
 		})
 		return
 	}
 
 	response := &dtos.SummaryResponse{
-		Default: *summary,
+		Default:  *defaultSummary,
+		Fallback: *fallbackSummary,
 	}
-
-	slog.Info("Summary", "from", from, "to", to, "summary", summary)
 
 	c.JSON(http.StatusOK, response)
 }

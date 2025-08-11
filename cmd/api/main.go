@@ -68,12 +68,23 @@ func main() {
 	r := setupRouter()
 	registerRoutes(r, paymentHandlers)
 
-	workers := workers.NewWorkers(redisRepo)
+	selector := workers.NewServiceSelector()
+
+	biasStr := os.Getenv("DEFAULT_API_BIAS")
+	bias, err := strconv.ParseInt(biasStr, 10, 0)
+	if err != nil {
+		bias = 3
+	}
+	healthChecker := workers.NewHealthCheckWorker(selector, int(bias))
+
+	workers := workers.NewWorkers(redisRepo, selector)
 	nWorkersStr := os.Getenv("N_WORKERS")
 	nWorkers, err := strconv.ParseInt(nWorkersStr, 10, 0)
 	if err != nil {
 		nWorkers = 1
 	}
+
+	go healthChecker.Start(context.Background())
 	go workers.StartWorkers(context.Background(), int(nWorkers))
 
 	slog.Info("API is running on port 8080")

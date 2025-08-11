@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -19,15 +18,15 @@ type Workers struct {
 	redisRepo  *repositories.RedisRepository
 	httpClient *http.Client
 	maxRetries int
-	baseDelay  time.Duration
+	selector   *ServiceSelector
 }
 
-func NewWorkers(redisRepo *repositories.RedisRepository) *Workers {
+func NewWorkers(redisRepo *repositories.RedisRepository, selector *ServiceSelector) *Workers {
 	return &Workers{
 		redisRepo:  redisRepo,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 5 * time.Second},
 		maxRetries: 5,
-		baseDelay:  2 * time.Second,
+		selector:   selector,
 	}
 }
 
@@ -90,7 +89,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 
 	slog.Debug("Processando pagamento", "correlationId", paymentRequest.CorrelationId)
 
-	paymentResponse, err := w.callPaymentAPIWithRetry(ctx, paymentRequest)
+	paymentResponse, apiUsed, err := w.callPaymentAPIWithRetry(ctx, paymentRequest)
 	if err != nil {
 		return fmt.Errorf("Erro ao chamar API de pagamento: %w", err)
 	}
@@ -98,6 +97,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 	processedPayment := dtos.ProcessedPayment{
 		CorrelationId: paymentResponse.CorrelationId,
 		Amount:        paymentResponse.Amount,
+		Api:           *apiUsed,
 		ProcessedAt:   paymentResponse.RequestedAt,
 	}
 
@@ -111,7 +111,7 @@ func (w *Workers) processPayment(ctx context.Context) error {
 	return nil
 }
 
-func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.PaymentRequest) (*dtos.PaymentAPIRequest, error) {
+func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.PaymentRequest) (*dtos.PaymentAPIRequest, *dtos.PaymentAPI, error) {
 	var lastErr error
 
 	paymentAPIRequest := dtos.PaymentAPIRequest{
@@ -120,11 +120,12 @@ func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.Pay
 		RequestedAt:   time.Now().Format(time.RFC3339),
 	}
 
-	defaultUrl := os.Getenv("DEFAULT_API_URL")
 	for attempt := 0; attempt <= w.maxRetries; attempt++ {
-		err := w.callPaymentAPI(ctx, defaultUrl, &paymentAPIRequest)
+		api := w.selector.GetActive()
+		url := dtos.ApiUrl[api]
+		err := w.callPaymentAPI(ctx, url+"/payments", &paymentAPIRequest)
 		if err == nil {
-			return &paymentAPIRequest, nil
+			return &paymentAPIRequest, &api, nil
 		}
 
 		if attempt == w.maxRetries {
@@ -133,20 +134,13 @@ func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.Pay
 
 		lastErr = err
 		if !w.isRetryableError(err) {
-			return nil, fmt.Errorf("Erro não recuperável: %w", err)
+			return nil, nil, fmt.Errorf("Erro não recuperável: %w", err)
 		}
 
 		slog.Debug("Tentativa falhou", "tentativa", attempt, "maxTentativas", w.maxRetries+1, "correlationId", payment.CorrelationId)
 	}
 
-	slog.Info("Todas as tentativas falharam para pagamento, tentando fallback", "correlationId", payment.CorrelationId)
-	fallbackUrl := os.Getenv("FALLBACK_API_URL")
-	err := w.callPaymentAPI(ctx, fallbackUrl, &paymentAPIRequest)
-	if err == nil {
-		return &paymentAPIRequest, nil
-	}
-
-	return nil, fmt.Errorf("Todas as tentativas falharam: %w", lastErr)
+	return nil, nil, fmt.Errorf("Todas as tentativas falharam: %w", lastErr)
 }
 
 func (w *Workers) callPaymentAPI(ctx context.Context, url string, payment *dtos.PaymentAPIRequest) error {

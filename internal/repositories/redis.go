@@ -10,6 +10,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type processedSet uint8
+
+const (
+	PROCESSED_DEFAULT = iota
+	PROCESSED_FALLBACK
+)
+
+var processedSetKey = map[processedSet]string{
+	PROCESSED_DEFAULT:  "payments:processed:default",
+	PROCESSED_FALLBACK: "payments:processed:fallback",
+}
+
 type RedisRepository struct {
 	client *redis.Client
 }
@@ -93,8 +105,9 @@ func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.Proc
 
 	// Use timestamp as score for efficient range queries
 	score := float64(processedAt.Unix())
+	key := processedSetKey[processedSet(payment.Api)]
 
-	err = r.client.ZAdd(ctx, "payments:processed", redis.Z{
+	err = r.client.ZAdd(ctx, key, redis.Z{
 		Score:  score,
 		Member: paymentData,
 	}).Err()
@@ -190,12 +203,14 @@ func (r *RedisRepository) ClearAll(ctx context.Context) error {
 	return nil
 }
 
-func (r *RedisRepository) GetSummaryByDateRange(ctx context.Context, from, to time.Time) (*dtos.APISummary, error) {
+func (r *RedisRepository) GetSummaryByDateRange(ctx context.Context, api dtos.PaymentAPI, from, to time.Time) (*dtos.APISummary, error) {
 	fromScore := float64(from.Unix())
 	toScore := float64(to.Unix())
 
+	key := processedSetKey[processedSet(api)]
+
 	// Get all payments in date range
-	results, err := r.client.ZRangeByScore(ctx, "payments:processed", &redis.ZRangeBy{
+	results, err := r.client.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 		Min: fmt.Sprintf("%.0f", fromScore),
 		Max: fmt.Sprintf("%.0f", toScore),
 	}).Result()
