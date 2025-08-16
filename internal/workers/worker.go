@@ -15,18 +15,20 @@ import (
 )
 
 type Workers struct {
-	redisRepo  *repositories.RedisRepository
-	httpClient *http.Client
-	maxRetries int
-	selector   *ServiceSelector
+	redisRepo   *repositories.RedisRepository
+	httpClient  *http.Client
+	maxRetries  int
+	baseBackoff time.Duration
+	selector    *ServiceSelector
 }
 
 func NewWorkers(redisRepo *repositories.RedisRepository, selector *ServiceSelector) *Workers {
 	return &Workers{
-		redisRepo:  redisRepo,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-		maxRetries: 5,
-		selector:   selector,
+		redisRepo:   redisRepo,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		maxRetries:  12,
+		baseBackoff: time.Millisecond * 10,
+		selector:    selector,
 	}
 }
 
@@ -128,6 +130,13 @@ func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.Pay
 		}
 
 		slog.Debug("Tentativa falhou", "tentativa", attempt, "maxTentativas", w.maxRetries+1, "correlationId", payment.CorrelationId)
+		delay := w.calculateBackoff(attempt)
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(delay):
+			continue
+		}
 	}
 
 	return nil, nil, fmt.Errorf("Todas as tentativas falharam: %w", lastErr)
@@ -160,6 +169,10 @@ func (w *Workers) callPaymentAPI(ctx context.Context, url string, payment *dtos.
 	}
 
 	return nil
+}
+
+func (w *Workers) calculateBackoff(tries int) time.Duration {
+	return time.Duration(tries*tries) * w.baseBackoff
 }
 
 type HTTPError struct {
