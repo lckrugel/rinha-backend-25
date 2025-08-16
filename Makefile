@@ -20,19 +20,3 @@ logs-redis:
 
 logs-nginx:
 		docker compose logs nginx -f
-
-inspect-queue:
-		@echo "=== Payment Queue (first 10 items) ==="
-		@docker compose exec redis redis-cli lrange payments:queue 0 9
-
-inspect-processing:
-		@echo "=== Currently Processing ==="
-		@docker compose exec redis redis-cli smembers payments:processing
-
-inspect-processed:
-		@echo "=== Processed Payments Count ==="
-		@docker compose exec redis redis-cli scard payments:processed:ids
-
-summary:
-		@echo "=== Payment Summary ==="
-		@curl -s http://localhost:9999/payments-summary | jq . || echo "Summary endpoint failed"
