@@ -1,12 +1,6 @@
 # YAML anchors for reusable configurations
 x-api: &api
   build: .
-  environment:
-    - N_WORKERS=2
-    - DEFAULT_API_BIAS=6
-    - LOG_LEVEL=INFO
-    - REDIS_HOST=redis
-    - REDIS_PASSWORD=123456
   depends_on:
     - redis
   networks:
@@ -17,6 +11,13 @@ x-api: &api
       limits:
         cpus: "0.5"
         memory: "128MB"
+
+  x-api-env: &api-env
+    N_WORKERS: "2"
+    DEFAULT_API_BIAS: "6"
+    LOG_LEVEL: "INFO"
+    REDIS_HOST: "redis"
+    REDIS_PASSWORD: "123456"
 
 services:
   nginx:
@@ -39,9 +40,15 @@ services:
 
   api1:
     <<: *api
+    environment:
+      <<: *api-env
+      CONSUMER_ID: consumer-0
 
   api2:
     <<: *api
+    environment:
+      <<: *api-env
+      CONSUMER_ID: consumer-1
 
   redis:
     image: redis:alpine
@@ -54,7 +61,6 @@ services:
         limits:
           cpus: "0.4"
           memory: "62MB"
-
 volumes:
   redis_data:
 

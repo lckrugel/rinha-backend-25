@@ -19,6 +19,7 @@ type Workers struct {
 	httpClient *http.Client
 	maxRetries int
 	selector   *ServiceSelector
+	queue      chan dtos.PaymentRequest
 }
 
 func NewWorkers(redisRepo *repositories.RedisRepository, selector *ServiceSelector) *Workers {
@@ -55,7 +56,7 @@ func (w *Workers) start(ctx context.Context, workerId int) {
 		default:
 			processCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 
-			err := w.processPayment(processCtx)
+			err := w.processPayment(processCtx, workerId)
 			if err != nil {
 				slog.Warn("Worker encountered an error", "workerId", workerId, "err", err)
 			}
@@ -65,8 +66,9 @@ func (w *Workers) start(ctx context.Context, workerId int) {
 	}
 }
 
-func (w *Workers) processPayment(ctx context.Context) error {
-	paymentRequest, err := w.redisRepo.DequeueForProcessing(ctx)
+func (w *Workers) processPayment(ctx context.Context, workerId int) error {
+	consumerId := fmt.Sprintf("%s-%d", w.redisRepo.ConsumerId, workerId)
+	paymentRequest, err := w.redisRepo.ReadFromStream(ctx, consumerId)
 	if err != nil {
 		return fmt.Errorf("Erro ao remover pagamento da fila: %w", err)
 	}
@@ -75,19 +77,18 @@ func (w *Workers) processPayment(ctx context.Context) error {
 		return nil // Fila vazia, nada a processar
 	}
 
-	defer func() {
-		w.redisRepo.RemoveFromProcessing(ctx, paymentRequest.CorrelationId)
-	}()
-
 	isProcessed, err := w.redisRepo.IsProcessed(ctx, paymentRequest.CorrelationId)
 	if err != nil {
-		return fmt.Errorf("Erro ao verificar pagamento processado: %w", err)
-	}
-	if isProcessed {
+		return err
+	} else if isProcessed {
+		err = w.redisRepo.AckMessage(ctx, paymentRequest.RedisStreamId, nil)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 
-	slog.Debug("Processando pagamento", "correlationId", paymentRequest.CorrelationId)
+	slog.Debug("Processando pagamento", "code", "PROCESSING_START", "payment-request", paymentRequest)
 
 	paymentResponse, apiUsed, err := w.callPaymentAPIWithRetry(ctx, paymentRequest)
 	if err != nil {
@@ -101,12 +102,12 @@ func (w *Workers) processPayment(ctx context.Context) error {
 		ProcessedAt:   paymentResponse.RequestedAt,
 	}
 
-	err = w.redisRepo.StoreProcessed(ctx, &processedPayment)
+	err = w.redisRepo.StoreProcessed(ctx, &processedPayment, paymentRequest.RedisStreamId)
 	if err != nil {
 		return fmt.Errorf("Erro ao marcar pagamento como processado: %w", err)
 	}
 
-	slog.Debug("Pagamento processado com sucesso", "correlationId", processedPayment.CorrelationId, "amount", processedPayment.Amount)
+	slog.Debug("Pagamento processado com sucesso", "code", "PROCESSING_END", "payment-processed", processedPayment)
 
 	return nil
 }
@@ -117,7 +118,7 @@ func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.Pay
 	paymentAPIRequest := dtos.PaymentAPIRequest{
 		CorrelationId: payment.CorrelationId,
 		Amount:        payment.Amount,
-		RequestedAt:   time.Now().Format(time.RFC3339),
+		RequestedAt:   payment.RequestedAt.Format("2006-01-02T15:04:05.000Z"),
 	}
 
 	for attempt := 0; attempt <= w.maxRetries; attempt++ {
@@ -134,6 +135,7 @@ func (w *Workers) callPaymentAPIWithRetry(ctx context.Context, payment *dtos.Pay
 
 		lastErr = err
 		if !w.isRetryableError(err) {
+			w.redisRepo.AckMessage(ctx, payment.RedisStreamId, nil)
 			return nil, nil, fmt.Errorf("Erro não recuperável: %w", err)
 		}
 
@@ -160,7 +162,9 @@ func (w *Workers) callPaymentAPI(ctx context.Context, url string, payment *dtos.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		slog.Warn("Processamento de pagamento falhou", "url", url, "codigo", resp.StatusCode)
+		if resp.StatusCode != 500 {
+			slog.Error("Processamento de pagamento falhou", "url", url, "codigo", resp.StatusCode)
+		}
 		return &HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,

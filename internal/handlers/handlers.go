@@ -29,9 +29,7 @@ func (h *PaymentHandlers) HandlePayment(c *gin.Context) {
 		return
 	}
 
-	h.redisRepo.Enqueue(c, paymentData)
-
-	slog.Debug("Pagamento enfileirado", "correlationId", paymentData.CorrelationId)
+	h.redisRepo.AddToStream(c, &paymentData)
 
 	c.Status(http.StatusOK)
 }
@@ -43,7 +41,7 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 	var from time.Time
 	if fromQS != "" {
 		var err error
-		from, err = time.Parse(time.RFC3339, fromQS)
+		from, err = time.Parse("2006-01-02T15:04:05.000Z", fromQS)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "Formato inválido para o parâmetro 'from'",
@@ -56,7 +54,7 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 	var to time.Time
 	if toQS != "" {
 		var err error
-		to, err = time.Parse(time.RFC3339, toQS)
+		to, err = time.Parse("2006-01-02T15:04:05.000Z", toQS)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "Formato inválido para o parâmetro 'to'",
@@ -65,6 +63,8 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 			return
 		}
 	}
+
+	slog.Info("Summary", "from", from, "to", to)
 
 	defaultSummary, err := h.redisRepo.GetSummaryByDateRange(c, dtos.DEFAULT_API, from, to)
 	if err != nil {
@@ -92,15 +92,11 @@ func (h *PaymentHandlers) HandlePaymentSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (h *PaymentHandlers) HandleQueueDump(c *gin.Context) {
-	payments, err := h.redisRepo.DumpQueue(c)
+func (h *PaymentHandlers) PurgePayments(c *gin.Context) {
+	err := h.redisRepo.FlushDB(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "Erro ao obter fila de pagamentos",
-			"error":   err.Error(),
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Erro ao limpar pagamentos"})
 		return
 	}
-
-	c.JSON(http.StatusOK, payments)
+	c.JSON(http.StatusOK, gin.H{"message": "Todos os pagamentos foram deletados"})
 }

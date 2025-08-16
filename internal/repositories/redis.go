@@ -4,6 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lckrugel/rinha-backend-25/internal/dtos"
@@ -22,8 +28,19 @@ var processedSetKey = map[processedSet]string{
 	PROCESSED_FALLBACK: "payments:processed:fallback",
 }
 
+func createStreamGroup(r *redis.Client, stream, group string) error {
+	err := r.XGroupCreateMkStream(context.Background(), stream, group, "$").Err()
+	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		return err
+	}
+	return nil
+}
+
 type RedisRepository struct {
-	client *redis.Client
+	client     *redis.Client
+	streamKey  string
+	readGroup  string
+	ConsumerId string
 }
 
 func NewRedisRepository(addr, password string) *RedisRepository {
@@ -31,7 +48,7 @@ func NewRedisRepository(addr, password string) *RedisRepository {
 		Addr:         addr,
 		Password:     password,
 		DB:           0,
-		PoolSize:     8,
+		PoolSize:     15,
 		MinIdleConns: 1,
 		MaxRetries:   3,
 		DialTimeout:  5 * time.Second,
@@ -39,8 +56,19 @@ func NewRedisRepository(addr, password string) *RedisRepository {
 		WriteTimeout: 3 * time.Second,
 	})
 
+	stream := "payments:stream"
+	group := "read-group"
+
+	err := createStreamGroup(rdb, stream, group)
+	if err != nil {
+		log.Fatalf("Falha ao criar redis stream com read group: %v", err)
+	}
+
 	return &RedisRepository{
-		client: rdb,
+		client:     rdb,
+		streamKey:  stream,
+		readGroup:  group,
+		ConsumerId: os.Getenv("CONSUMER_ID"),
 	}
 }
 
@@ -48,52 +76,70 @@ func (r *RedisRepository) Close() error {
 	return r.client.Close()
 }
 
-func (r *RedisRepository) Enqueue(ctx context.Context, payment dtos.PaymentRequest) error {
-	data, err := json.Marshal(payment)
-	if err != nil {
-		return fmt.Errorf("Erro ao serializar pagamento: %w", err)
+func (r *RedisRepository) AddToStream(ctx context.Context, payment *dtos.PaymentRequest) error {
+	payment.RequestedAt = time.Now().UTC()
+	values := map[string]any{
+		"correlationId": payment.CorrelationId,
+		"amount":        payment.Amount,
+		"requestedAt":   payment.RequestedAt.Format("2006-01-02T15:04:05.000Z"),
 	}
-
-	err = r.client.LPush(ctx, "payments:queue", data).Err()
+	err := r.client.XAdd(ctx, &redis.XAddArgs{Stream: r.streamKey, Values: values}).Err()
 	if err != nil {
-		return fmt.Errorf("Erro ao adicionar pagamento na fila: %w", err)
+		return fmt.Errorf("Falha ao adicionar pagamento à stream: %w", err)
 	}
-
 	return nil
 }
 
-func (r *RedisRepository) DequeueForProcessing(ctx context.Context) (*dtos.PaymentRequest, error) {
-	data, err := r.client.BLPop(ctx, 5*time.Second, "payments:queue").Result()
+func (r *RedisRepository) ReadFromStream(ctx context.Context, consumerId string) (*dtos.PaymentRequest, error) {
+	data, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{Streams: []string{r.streamKey, ">"},
+		Group:    r.readGroup,
+		Consumer: consumerId,
+		Count:    1,
+		Block:    5 * time.Second,
+		NoAck:    false,
+	}).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, nil // Fila vazia e timeout atingido
+			return nil, nil // Timeout, sem mensagens
 		}
-		return nil, fmt.Errorf("Erro ao remover pagamento da fila: %w", err)
+		return nil, fmt.Errorf("Erro ao ler stream de pagamentos: %w", err)
 	}
 
-	paymentJSON := data[1]
+	if len(data) == 0 || len(data[0].Messages) == 0 {
+		return nil, nil // Não leu nada
+	}
 
-	var payment dtos.PaymentRequest
-	err = json.Unmarshal([]byte(paymentJSON), &payment)
+	message := data[0].Messages[0]
+	messageId := data[0].Messages[0].ID
+
+	correlationId, _ := message.Values["correlationId"].(string)
+	amount := 0.0
+	switch v := message.Values["amount"].(type) {
+	case float64:
+		amount = v
+	case string:
+		amount, err = strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Erro ao converter string para float: %w", err)
+		}
+	}
+	requestedAtStr, _ := message.Values["requestedAt"].(string)
+
+	requestedAt, err := time.Parse("2006-01-02T15:04:05.000Z", requestedAtStr)
 	if err != nil {
-		return nil, fmt.Errorf("Erro ao desserializar pagamento: %w", err)
+		return nil, fmt.Errorf("Erro ao converter data: %w", err)
 	}
 
-	err = r.client.SAdd(ctx, "payments:processing", payment.CorrelationId).Err()
-	if err != nil {
-		r.client.LPush(ctx, "payments:queue", paymentJSON)
-		return nil, fmt.Errorf("Erro ao adicionar ao processamento: %w", err)
-	}
-
-	return &payment, nil
+	return &dtos.PaymentRequest{
+		CorrelationId: correlationId,
+		Amount:        amount,
+		RedisStreamId: messageId,
+		RequestedAt:   requestedAt,
+	}, nil
 }
 
-func (r *RedisRepository) RemoveFromProcessing(ctx context.Context, correlationId string) error {
-	return r.client.SRem(ctx, "payments:processing", correlationId).Err()
-}
-
-func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.ProcessedPayment) error {
-	processedAt, err := time.Parse(time.RFC3339, payment.ProcessedAt)
+func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.ProcessedPayment, messageId string) error {
+	processedAt, err := time.Parse("2006-01-02T15:04:05.000Z", payment.ProcessedAt)
 	if err != nil {
 		return fmt.Errorf("Erro ao parsear data: %w", err)
 	}
@@ -103,100 +149,55 @@ func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.Proc
 		return fmt.Errorf("Erro ao serializar pagamento: %w", err)
 	}
 
-	// Use timestamp as score for efficient range queries
+	pipe := r.client.TxPipeline()
+
 	score := float64(processedAt.Unix())
 	key := processedSetKey[processedSet(payment.Api)]
 
-	err = r.client.ZAdd(ctx, key, redis.Z{
+	pipe.ZAdd(ctx, key, redis.Z{
 		Score:  score,
 		Member: paymentData,
-	}).Err()
+	})
+
+	pipe.SAdd(ctx, "payments:processed:ids", payment.CorrelationId)
+
+	err = r.AckMessage(ctx, messageId, &pipe)
 	if err != nil {
-		return fmt.Errorf("Erro ao armazenar pagamento processado: %w", err)
+		return err
 	}
 
-	err = r.client.SAdd(ctx, "payments:processed:ids", payment.CorrelationId).Err()
+	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("Erro ao marcar pagamento como processado: %w", err)
+		return fmt.Errorf("Erro armazenar pagamento processado: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RedisRepository) AckMessage(ctx context.Context, messageId string, pipePtr *redis.Pipeliner) error {
+	if pipePtr != nil {
+		pipe := *pipePtr
+		pipe.XAck(ctx, r.streamKey, r.readGroup, messageId)
+		return nil
+	} else {
+		err := r.client.XAck(ctx, r.streamKey, r.readGroup, messageId).Err()
+		if err != nil {
+			return fmt.Errorf("Erro ao dar ack no pagamento: %w", err)
+		}
 	}
 	return nil
 }
 
-func (r *RedisRepository) IsProcessed(ctx context.Context, correlationId string) (bool, error) {
-	exists, err := r.client.SIsMember(ctx, "payments:processed:ids", correlationId).Result()
+func (r *RedisRepository) IsProcessed(ctx context.Context, id string) (bool, error) {
+	exists, err := r.client.SIsMember(ctx, "payments:processed:ids", id).Result()
 	if err != nil {
 		return false, fmt.Errorf("Erro ao verificar se pagamento foi processado: %w", err)
 	}
 	return exists, nil
 }
 
-func (r *RedisRepository) IsInQueue(ctx context.Context, correlationId string) (bool, error) {
-	items, err := r.client.LRange(ctx, "payments:queue", 0, -1).Result()
-	if err != nil {
-		return false, fmt.Errorf("Erro ao verificar fila: %w", err)
-	}
-
-	for _, item := range items {
-		var payment dtos.PaymentRequest
-		if err := json.Unmarshal([]byte(item), &payment); err != nil {
-			continue
-		}
-		if payment.CorrelationId == correlationId {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func (r *RedisRepository) IsInProcessing(ctx context.Context, correlationId string) (bool, error) {
-	exists, err := r.client.SIsMember(ctx, "payments:processing", correlationId).Result()
-	if err != nil {
-		return false, fmt.Errorf("Erro ao verificar processamento: %w", err)
-	}
-	return exists, nil
-}
-
-func (r *RedisRepository) IsProcessedOrInQueue(ctx context.Context, correlationId string) (bool, error) {
-	isProcessed, err := r.IsProcessed(ctx, correlationId)
-	if err != nil {
-		return false, err
-	}
-	if isProcessed {
-		return true, nil
-	}
-
-	inProcessing, err := r.IsInProcessing(ctx, correlationId)
-	if err != nil {
-		return false, err
-	}
-	if inProcessing {
-		return true, nil
-	}
-
-	return r.IsInQueue(ctx, correlationId)
-}
-
-func (r *RedisRepository) DumpQueue(ctx context.Context) ([]dtos.PaymentRequest, error) {
-	items, err := r.client.LRange(ctx, "payments:queue", 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("Erro ao obter fila de pagamentos: %w", err)
-	}
-
-	var payments []dtos.PaymentRequest
-	for _, item := range items {
-		var payment dtos.PaymentRequest
-		if err := json.Unmarshal([]byte(item), &payment); err != nil {
-			continue // Ignora itens inválidos
-		}
-		payments = append(payments, payment)
-	}
-
-	return payments, nil
-}
-
-func (r *RedisRepository) ClearAll(ctx context.Context) error {
-	err := r.client.FlushAll(ctx).Err()
+func (r *RedisRepository) FlushDB(ctx context.Context) error {
+	err := r.client.FlushDB(ctx).Err()
 	if err != nil {
 		return fmt.Errorf("Erro ao limpar todos os dados do Redis: %w", err)
 	}
@@ -204,30 +205,34 @@ func (r *RedisRepository) ClearAll(ctx context.Context) error {
 }
 
 func (r *RedisRepository) GetSummaryByDateRange(ctx context.Context, api dtos.PaymentAPI, from, to time.Time) (*dtos.APISummary, error) {
-	fromScore := float64(from.Unix())
-	toScore := float64(to.Unix())
+	fromScore := from.Unix()
+	toScore := to.Unix()
 
 	key := processedSetKey[processedSet(api)]
 
 	// Get all payments in date range
 	results, err := r.client.ZRangeByScore(ctx, key, &redis.ZRangeBy{
-		Min: fmt.Sprintf("%.0f", fromScore),
-		Max: fmt.Sprintf("%.0f", toScore),
+		Min: fmt.Sprintf("%d", fromScore),
+		Max: fmt.Sprintf("%d", toScore),
 	}).Result()
 	if err != nil {
 		return nil, fmt.Errorf("Erro ao buscar pagamentos por data: %w", err)
 	}
 
-	var totalAmount float32
-	totalRequests := len(results)
+	var totalAmount float64
 
+	totalRequests := 0
 	for _, result := range results {
 		var payment dtos.ProcessedPayment
 		if err := json.Unmarshal([]byte(result), &payment); err != nil {
+			slog.Warn("Failed to unmarshall processed payment. Skipping")
 			continue // Skip invalid entries
 		}
 		totalAmount += payment.Amount
+		totalRequests++
 	}
+
+	totalAmount = math.Round(totalAmount*100) / 100
 
 	return &dtos.APISummary{
 		TotalRequests: totalRequests,

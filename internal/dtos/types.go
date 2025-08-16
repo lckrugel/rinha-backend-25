@@ -1,13 +1,17 @@
 package dtos
 
+import "time"
+
 type PaymentRequest struct {
 	CorrelationId string  `json:"correlationId"`
-	Amount        float32 `json:"amount"`
+	Amount        float64 `json:"amount"`
+	RequestedAt   time.Time
+	RedisStreamId string
 }
 
 type PaymentAPIRequest struct {
 	CorrelationId string  `json:"correlationId"`
-	Amount        float32 `json:"amount"`
+	Amount        float64 `json:"amount"`
 	RequestedAt   string  `json:"requestedAt"`
 }
 
@@ -18,7 +22,7 @@ type SummaryResponse struct {
 
 type APISummary struct {
 	TotalRequests int     `json:"totalRequests"`
-	TotalAmount   float32 `json:"totalAmount"`
+	TotalAmount   float64 `json:"totalAmount"`
 }
 
 type HealthCheckResponse struct {
@@ -26,16 +30,10 @@ type HealthCheckResponse struct {
 	MinResponseTime int  `json:"minResponseTime"`
 }
 
-type PaymentAPISummaryResponse struct {
-	APISummary
-	TotalFee          float32 `json:"totalFee"`
-	FeePerTransaction float32 `json:"feePerTransaction"`
-}
-
 type ProcessedPayment struct {
 	CorrelationId string     `json:"correlationId"`
 	Api           PaymentAPI `json:"paymentAPI"`
-	Amount        float32    `json:"amount"`
+	Amount        float64    `json:"amount"`
 	ProcessedAt   string     `json:"processedAt"`
 }
 

@@ -51,7 +51,7 @@ func setupLogger() {
 func registerRoutes(r *gin.Engine, h *handlers.PaymentHandlers) {
 	r.POST("payments", h.HandlePayment)
 	r.GET("payments-summary", h.HandlePaymentSummary)
-	r.GET("payments-queue", h.HandleQueueDump)
+	r.POST("payments-purge", h.PurgePayments)
 }
 
 func main() {
