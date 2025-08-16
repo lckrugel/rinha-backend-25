@@ -159,8 +159,6 @@ func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.Proc
 		Member: paymentData,
 	})
 
-	pipe.SAdd(ctx, "payments:processed:ids", payment.CorrelationId)
-
 	err = r.AckMessage(ctx, messageId, &pipe)
 	if err != nil {
 		return err
@@ -186,14 +184,6 @@ func (r *RedisRepository) AckMessage(ctx context.Context, messageId string, pipe
 		}
 	}
 	return nil
-}
-
-func (r *RedisRepository) IsProcessed(ctx context.Context, id string) (bool, error) {
-	exists, err := r.client.SIsMember(ctx, "payments:processed:ids", id).Result()
-	if err != nil {
-		return false, fmt.Errorf("Erro ao verificar se pagamento foi processado: %w", err)
-	}
-	return exists, nil
 }
 
 func (r *RedisRepository) FlushDB(ctx context.Context) error {

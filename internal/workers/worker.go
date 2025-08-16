@@ -77,17 +77,6 @@ func (w *Workers) processPayment(ctx context.Context, workerId int) error {
 		return nil // Fila vazia, nada a processar
 	}
 
-	isProcessed, err := w.redisRepo.IsProcessed(ctx, paymentRequest.CorrelationId)
-	if err != nil {
-		return err
-	} else if isProcessed {
-		err = w.redisRepo.AckMessage(ctx, paymentRequest.RedisStreamId, nil)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
 	slog.Debug("Processando pagamento", "code", "PROCESSING_START", "payment-request", paymentRequest)
 
 	paymentResponse, apiUsed, err := w.callPaymentAPIWithRetry(ctx, paymentRequest)
