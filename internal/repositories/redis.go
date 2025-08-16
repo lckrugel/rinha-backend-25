@@ -151,7 +151,7 @@ func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.Proc
 
 	pipe := r.client.TxPipeline()
 
-	score := float64(processedAt.Unix())
+	score := float64(processedAt.UnixMilli())
 	key := processedSetKey[processedSet(payment.Api)]
 
 	pipe.ZAdd(ctx, key, redis.Z{
@@ -205,8 +205,8 @@ func (r *RedisRepository) FlushDB(ctx context.Context) error {
 }
 
 func (r *RedisRepository) GetSummaryByDateRange(ctx context.Context, api dtos.PaymentAPI, from, to time.Time) (*dtos.APISummary, error) {
-	fromScore := from.Unix()
-	toScore := to.Unix()
+	fromScore := from.UnixMilli()
+	toScore := to.UnixMilli()
 
 	key := processedSetKey[processedSet(api)]
 
