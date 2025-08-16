@@ -141,7 +141,7 @@ func (r *RedisRepository) ReadFromStream(ctx context.Context, consumerId string)
 func (r *RedisRepository) StoreProcessed(ctx context.Context, payment *dtos.ProcessedPayment, messageId string) error {
 	processedAt, err := time.Parse("2006-01-02T15:04:05.000Z", payment.ProcessedAt)
 	if err != nil {
-		return fmt.Errorf("Erro ao parsear data: %w", err)
+		return fmt.Errorf("Erro ao converter data: %w", err)
 	}
 
 	paymentData, err := json.Marshal(payment)
@@ -200,7 +200,6 @@ func (r *RedisRepository) GetSummaryByDateRange(ctx context.Context, api dtos.Pa
 
 	key := processedSetKey[processedSet(api)]
 
-	// Get all payments in date range
 	results, err := r.client.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 		Min: fmt.Sprintf("%d", fromScore),
 		Max: fmt.Sprintf("%d", toScore),
@@ -209,14 +208,13 @@ func (r *RedisRepository) GetSummaryByDateRange(ctx context.Context, api dtos.Pa
 		return nil, fmt.Errorf("Erro ao buscar pagamentos por data: %w", err)
 	}
 
-	var totalAmount float64
-
+	totalAmount := 0.0
 	totalRequests := 0
 	for _, result := range results {
 		var payment dtos.ProcessedPayment
 		if err := json.Unmarshal([]byte(result), &payment); err != nil {
 			slog.Warn("Failed to unmarshall processed payment. Skipping")
-			continue // Skip invalid entries
+			continue // Pula entrada inválida
 		}
 		totalAmount += payment.Amount
 		totalRequests++
