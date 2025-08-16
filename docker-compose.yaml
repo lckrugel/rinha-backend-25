@@ -5,15 +5,10 @@ x-api: &api
     - redis
   networks:
     - payment-processor
-    - backend
-  deploy:
-    resources:
-      limits:
-        cpus: "0.5"
-        memory: "128MB"
+    - backend  
 
   x-api-env: &api-env
-    N_WORKERS: "2"
+    N_WORKERS: "10"
     DEFAULT_API_BIAS: "6"
     LOG_LEVEL: "INFO"
     REDIS_HOST: "redis"
@@ -43,12 +38,22 @@ services:
     environment:
       <<: *api-env
       CONSUMER_ID: consumer-0
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "128MB"
 
   api2:
     <<: *api
     environment:
       <<: *api-env
       CONSUMER_ID: consumer-1
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "128MB"
 
   redis:
     image: redis:alpine
