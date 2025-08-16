@@ -19,7 +19,6 @@ type Workers struct {
 	httpClient *http.Client
 	maxRetries int
 	selector   *ServiceSelector
-	queue      chan dtos.PaymentRequest
 }
 
 func NewWorkers(redisRepo *repositories.RedisRepository, selector *ServiceSelector) *Workers {
