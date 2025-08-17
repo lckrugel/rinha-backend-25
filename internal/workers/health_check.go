@@ -31,13 +31,12 @@ func (hc *HealthCheckWorker) Start(ctx context.Context) {
 		default:
 			time.Sleep(time.Second * 5) // Espera 5s entre checagens
 			healthCheckCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+			defer cancel()
 
 			err := hc.chooseService(healthCheckCtx)
 			if err != nil {
 				slog.Error("Erro ao escolher o serviço", "err", err)
 			}
-
-			cancel()
 		}
 	}
 }
