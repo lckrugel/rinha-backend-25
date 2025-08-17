@@ -1,6 +1,6 @@
 # Rinha de Backend 2025
 
-Este repositório contém a minha solução para a Rinha de Backend 2025 utilizando Go.
+Este repositório contém a minha solução para a [Rinha de Backend 2025](https://github.com/zanfranceschi/rinha-de-backend-2025) utilizando Go.
 
 Essa subimissão faz parte do meu aprendizado sobre Go, Redis, e filas de processamento assíncrono.
 
